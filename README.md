@@ -1,6 +1,6 @@
 # whoop-journal
 
-Pull Whoop and Strava data into Obsidian journal entries. Recovery, sleep, strain, and running stats — written to YAML frontmatter (for Dataview/Heatmap Tracker queries) and a readable markdown section.
+Pull Whoop and Strava data into Obsidian journal entries. Recovery, sleep, strain, and activity stats — written to YAML frontmatter (for Dataview/Heatmap Tracker queries) and a readable markdown section.
 
 **Zero external dependencies.** Pure Python stdlib. Works with Python 3.8+ on any Mac or Linux system.
 
@@ -11,11 +11,13 @@ Runs once daily (manually or via scheduled task). For a given date:
 1. Pulls **Whoop** data: recovery score, HRV, resting HR, SpO2, skin temp, sleep stages, strain, workouts
 2. Pulls **Strava** data: distance, pace, elevation, heart rate for each activity
 3. Merges both into your Obsidian journal entry for that date
-4. If no journal entry exists, creates one from your template
+4. If no journal entry exists, creates one from a template with all sections pre-scaffolded
 
 Activities from both sources are matched by time — a morning run shows Strava's distance/pace alongside Whoop's strain score.
 
 ## Example output
+
+### Frontmatter (queryable via Dataview)
 
 ```yaml
 ---
@@ -24,6 +26,8 @@ date: "2026-03-28"
 day: "Saturday"
 tags:
   - journal
+people:
+places:
 whoop-recovery: 84
 whoop-hrv: 68.5
 whoop-rhr: 52
@@ -35,23 +39,45 @@ strava-runs: 1
 ---
 ```
 
-```markdown
+### Journal body
+
+New entries are created with all sections pre-scaffolded. The `## Whoop` section is populated automatically; the rest is yours to fill in.
+
+````markdown
+# Saturday, March 28, 2026
+
+## What happened today
+
+
+## What's on my mind
+
+
+## Grateful for
+
+
 ## Whoop
 
-**Recovery: 84%** | HRV: 68.5 ms | Resting HR: 52 bpm | SpO2: 97% | Skin Temp: 33.2C
+```
+Recovery   84%      ████████░░
+HRV        68.5ms   ██████░░░░
+RHR        52bpm    ██████████   SpO2 97% · 33.2°C
 
-### Sleep
-7h 36m in bed (91% performance, 94.2% efficiency)
-Light: 3h 12m | Deep: 1h 48m | REM: 2h 06m | Awake: 30m
-Cycles: 4 | Disturbances: 8 | Respiratory Rate: 15.2 rpm
+Sleep      7h 36m   ████████░░   91% perf · 94.2% eff · 15.2 rpm
+  Light    3h 12m   ████░░░░░░
+  Deep     1h 48m   ██░░░░░░░░
+  REM      2h 06m   ███░░░░░░░
+  Awake    30m      ░░░░░░░░░░
 
-### Strain
-Day Strain: 12.4 | Avg HR: 72 bpm | Max HR: 165 bpm | 2,150 kcal
+Strain     12.4     ██████░░░░   avg 72 bpm · max 165 bpm · 2,150 kcal
+```
 
 ### Activities
-**Morning Run** 6:30 AM — 4.2 mi, 8:12/mi pace, 32:45 elapsed
-↑ 185 ft | HR avg 148 / max 172 | Strain: 14.2
-```
+
+**Morning Run** · 6:30 AM
+| Distance | Pace | Duration | Elevation | Avg HR | Max HR | Strain |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4.2 mi | 8:12/mi | 32:45 | ↑ 185 ft | 148 bpm | 172 bpm | 14.2 |
+````
 
 ## Setup
 
@@ -79,9 +105,9 @@ You can set up one service at a time with `--whoop-only` or `--strava-only`.
 ### 3. Sync
 
 ```bash
-python3 bin/sync.py              # Yesterday's data
-python3 bin/sync.py --date 2026-03-28  # Specific date
-python3 bin/sync.py --verbose    # Debug output
+python3 bin/sync.py                       # Yesterday's data
+python3 bin/sync.py --date 2026-03-28     # Specific date
+python3 bin/sync.py --verbose             # Debug output
 ```
 
 ### 4. Schedule (optional)

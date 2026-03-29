@@ -456,8 +456,27 @@ def format_time_local(iso_str):
         return ""
 
 
+def _md_table(headers, values):
+    """Build a markdown table from parallel header/value lists."""
+    row1 = "| " + " | ".join(headers) + " |"
+    sep  = "| " + " | ".join(["---"] * len(headers)) + " |"
+    row2 = "| " + " | ".join(values) + " |"
+    return "\n".join([row1, sep, row2])
+
+
+def _bar(value, max_val, width=10, invert=False):
+    """Unicode block progress bar. \u2588 = filled, \u2591 = empty."""
+    if not max_val or max_val <= 0:
+        return "\u2591" * width
+    frac = max(0.0, min(1.0, value / max_val))
+    if invert:
+        frac = 1.0 - frac
+    filled = round(frac * width)
+    return "\u2588" * filled + "\u2591" * (width - filled)
+
+
 def build_whoop_section(whoop_data, strava_data):
-    """Build the ## Whoop markdown section."""
+    """Build the ## Whoop markdown section as a bar-chart dashboard."""
     parts = []
     parts.append("## Whoop")
     parts.append("")
@@ -467,117 +486,112 @@ def build_whoop_section(whoop_data, strava_data):
     sleep = whoop_data.get("sleep", {})
     whoop_workouts = whoop_data.get("workouts", [])
 
-    # Recovery line
     rec_score = recovery.get("score", {})
-    if recovery.get("score_state") == "PENDING_SCORE":
-        parts.append("**Recovery: Pending**")
-    elif rec_score:
-        items = []
-        if rec_score.get("recovery_score") is not None:
-            items.append("**Recovery: %d%%**" % round(rec_score["recovery_score"]))
-        if rec_score.get("hrv_rmssd_milli") is not None:
-            items.append("HRV: %.1f ms" % rec_score["hrv_rmssd_milli"])
-        if rec_score.get("resting_heart_rate") is not None:
-            items.append("Resting HR: %d bpm" % round(rec_score["resting_heart_rate"]))
-        if rec_score.get("spo2_percentage") is not None:
-            items.append("SpO2: %.0f%%" % rec_score["spo2_percentage"])
-        if rec_score.get("skin_temp_celsius") is not None:
-            items.append("Skin Temp: %.1fC" % rec_score["skin_temp_celsius"])
-        if items:
-            parts.append(" | ".join(items))
-    parts.append("")
-
-    # Sleep
+    cyc_score = cycle.get("score", {})
     slp_score = sleep.get("score", {})
     stage_summary = slp_score.get("stage_summary", {})
+
+    # rows: (label, value_str, bar_str, extras_str) — ("","","","") = blank separator
+    rows = []
+
+    # Recovery block
+    if recovery.get("score_state") == "PENDING_SCORE":
+        rows.append(("Recovery", "Pending", "\u2591" * 10, ""))
+    else:
+        if rec_score.get("recovery_score") is not None:
+            v = rec_score["recovery_score"]
+            rows.append(("Recovery", "%d%%" % round(v), _bar(v, 100), ""))
+        if rec_score.get("hrv_rmssd_milli") is not None:
+            v = rec_score["hrv_rmssd_milli"]
+            rows.append(("HRV", "%.1fms" % v, _bar(v, 100), ""))
+        if rec_score.get("resting_heart_rate") is not None:
+            v = rec_score["resting_heart_rate"]
+            extras = []
+            if rec_score.get("spo2_percentage") is not None:
+                extras.append("SpO2 %.0f%%" % rec_score["spo2_percentage"])
+            if rec_score.get("skin_temp_celsius") is not None:
+                extras.append("%.1f\u00b0C" % rec_score["skin_temp_celsius"])
+            # RHR: inverted, 30–80 bpm range
+            rows.append(("RHR", "%dbpm" % round(v), _bar(v - 30, 50, invert=True), " \u00b7 ".join(extras)))
+
+    # Sleep block
     if stage_summary:
-        total_in_bed = sum([
+        total_ms = sum([
             stage_summary.get("total_light_sleep_time_milli", 0),
             stage_summary.get("total_slow_wave_sleep_time_milli", 0),
             stage_summary.get("total_rem_sleep_time_milli", 0),
             stage_summary.get("total_awake_time_milli", 0),
         ])
         perf = slp_score.get("sleep_performance_percentage")
-        eff = slp_score.get("sleep_efficiency_percentage")
+        eff  = slp_score.get("sleep_efficiency_percentage")
+        resp = slp_score.get("respiratory_rate")
 
-        parts.append("### Sleep")
-        line1 = ms_to_hm(total_in_bed) + " in bed"
-        extras = []
+        sleep_extras = []
         if perf is not None:
-            extras.append("%d%% performance" % round(perf))
+            sleep_extras.append("%d%% perf" % round(perf))
         if eff is not None:
-            extras.append("%.1f%% efficiency" % eff)
-        if extras:
-            line1 += " (" + ", ".join(extras) + ")"
-        parts.append(line1)
+            sleep_extras.append("%.1f%% eff" % eff)
+        if resp is not None:
+            sleep_extras.append("%.1f rpm" % resp)
 
-        stage_parts = []
-        for label, key in [("Light", "total_light_sleep_time_milli"),
-                           ("Deep", "total_slow_wave_sleep_time_milli"),
-                           ("REM", "total_rem_sleep_time_milli"),
-                           ("Awake", "total_awake_time_milli")]:
-            val = stage_summary.get(key)
-            if val:
-                stage_parts.append("%s: %s" % (label, ms_to_hm(val)))
-        if stage_parts:
-            parts.append(" | ".join(stage_parts))
+        rows.append(("", "", "", ""))
+        rows.append(("Sleep", ms_to_hm(total_ms), _bar(total_ms, 9 * 3600000), " \u00b7 ".join(sleep_extras)))
+        for label, key in [("  Light", "total_light_sleep_time_milli"),
+                            ("  Deep",  "total_slow_wave_sleep_time_milli"),
+                            ("  REM",   "total_rem_sleep_time_milli"),
+                            ("  Awake", "total_awake_time_milli")]:
+            v = stage_summary.get(key, 0)
+            if v:
+                rows.append((label, ms_to_hm(v), _bar(v, total_ms) if total_ms else "\u2591" * 10, ""))
 
-        detail_parts = []
-        if slp_score.get("sleep_cycle_count") is not None:
-            detail_parts.append("Cycles: %d" % slp_score["sleep_cycle_count"])
-        if slp_score.get("disturbance_count") is not None:
-            detail_parts.append("Disturbances: %d" % slp_score["disturbance_count"])
-        if slp_score.get("respiratory_rate") is not None:
-            detail_parts.append("Respiratory Rate: %.1f rpm" % slp_score["respiratory_rate"])
-        if detail_parts:
-            parts.append(" | ".join(detail_parts))
-        parts.append("")
-
-    # Strain
-    cyc_score = cycle.get("score", {})
-    if cyc_score:
-        parts.append("### Strain")
-        items = []
-        if cyc_score.get("strain") is not None:
-            items.append("**Day Strain: %.1f**" % cyc_score["strain"])
+    # Strain block
+    if cyc_score.get("strain") is not None:
+        strain_extras = []
         if cyc_score.get("average_heart_rate") is not None:
-            items.append("Avg HR: %d bpm" % round(cyc_score["average_heart_rate"]))
+            strain_extras.append("avg %d bpm" % round(cyc_score["average_heart_rate"]))
         if cyc_score.get("max_heart_rate") is not None:
-            items.append("Max HR: %d bpm" % round(cyc_score["max_heart_rate"]))
+            strain_extras.append("max %d bpm" % round(cyc_score["max_heart_rate"]))
         if cyc_score.get("kilojoule") is not None:
             kcal = round(cyc_score["kilojoule"] / 4.184)
-            items.append("%s kcal" % format(kcal, ","))
-        if items:
-            parts.append(" | ".join(items))
-        parts.append("")
+            strain_extras.append("%s kcal" % format(kcal, ","))
+        rows.append(("", "", "", ""))
+        rows.append(("Strain", "%.1f" % cyc_score["strain"], _bar(cyc_score["strain"], 21), " \u00b7 ".join(strain_extras)))
 
-    # Activities — merge Whoop workouts + Strava activities
+    # Render as a fenced code block for reliable monospace alignment
+    if rows:
+        label_w = max((len(r[0]) for r in rows if r[0]), default=8)
+        value_w = max((len(r[1]) for r in rows if r[1]), default=6)
+        block = []
+        for r in rows:
+            if not r[0] and not r[1]:
+                block.append("")
+                continue
+            line = "%s  %s  %s" % (r[0].ljust(label_w), r[1].ljust(value_w), r[2])
+            if r[3]:
+                line += "   " + r[3]
+            block.append(line)
+        parts.append("```")
+        parts.extend(block)
+        parts.append("```")
+
+    parts.append("")
+
+    # Activities
     strava_activities = strava_data.get("activities", [])
     if whoop_workouts or strava_activities:
         parts.append("### Activities")
-        rendered = set()
-
-        # Try to match Strava activities to Whoop workouts by time overlap
+        parts.append("")
         for sa in strava_activities:
-            activity_line = _format_strava_activity(sa, whoop_workouts)
-            parts.append(activity_line)
-            rendered.add(sa.get("id"))
+            parts.append(_format_strava_activity(sa, whoop_workouts))
             parts.append("")
-
-        # Whoop-only workouts (no Strava match)
         for ww in whoop_workouts:
-            ww_start = ww.get("start", "")
-            # Check if this was already covered by a Strava activity
-            matched = False
-            for sa in strava_activities:
-                sa_start = sa.get("start_date", "")
-                if _times_overlap(ww_start, ww.get("end", ""),
-                                  sa_start, sa.get("elapsed_time", 0)):
-                    matched = True
-                    break
+            matched = any(
+                _times_overlap(ww.get("start", ""), ww.get("end", ""),
+                               sa.get("start_date", ""), sa.get("elapsed_time", 0))
+                for sa in strava_activities
+            )
             if not matched:
-                activity_line = _format_whoop_workout(ww)
-                parts.append(activity_line)
+                parts.append(_format_whoop_workout(ww))
                 parts.append("")
 
     return "\n".join(parts).rstrip()
@@ -597,9 +611,8 @@ def _times_overlap(start1_iso, end1_iso, start2_iso, duration2_s):
 
 
 def _format_strava_activity(sa, whoop_workouts):
-    """Format a Strava activity, enriched with Whoop strain if available."""
+    """Format a Strava activity as a header line + metrics table."""
     name = sa.get("name", sa.get("type", "Activity"))
-    sport = sa.get("type", "")
     start_time = format_time_local(sa.get("start_date_local", ""))
     distance = sa.get("distance", 0)
     moving_time = sa.get("moving_time", 0)
@@ -608,83 +621,66 @@ def _format_strava_activity(sa, whoop_workouts):
     avg_hr = sa.get("average_heartrate")
     max_hr = sa.get("max_heartrate")
 
-    # Main line: name, time, distance, pace
-    line1_parts = []
-    line1_parts.append("**%s**" % name)
+    header = "**%s**" % name
     if start_time:
-        line1_parts.append(start_time)
+        header += " \u00b7 " + start_time
 
-    detail_parts = []
+    headers, values = [], []
     if distance > 0:
         miles = distance / 1609.34
-        detail_parts.append("%.1f mi" % miles)
+        headers.append("Distance"); values.append("%.1f mi" % miles)
         pace = pace_per_mile(distance, moving_time)
         if pace:
-            detail_parts.append("%s/mi pace" % pace)
+            headers.append("Pace"); values.append("%s/mi" % pace)
     if elapsed_time:
-        detail_parts.append("%s elapsed" % seconds_to_hms(elapsed_time))
-
-    line1 = " ".join(line1_parts)
-    if detail_parts:
-        line1 += " — " + ", ".join(detail_parts)
-
-    # Second line: elevation, HR, whoop strain
-    line2_parts = []
+        headers.append("Duration"); values.append(seconds_to_hms(elapsed_time))
     if elevation and elevation > 0:
-        line2_parts.append("\u2191 %d ft" % round(elevation * 3.28084))
+        headers.append("Elevation"); values.append("\u2191 %d ft" % round(elevation * 3.28084))
     if avg_hr:
-        hr_str = "HR avg %d" % round(avg_hr)
-        if max_hr:
-            hr_str += " / max %d" % round(max_hr)
-        line2_parts.append(hr_str)
-
-    # Find matching Whoop workout for strain
+        headers.append("Avg HR"); values.append("%d bpm" % round(avg_hr))
+    if max_hr:
+        headers.append("Max HR"); values.append("%d bpm" % round(max_hr))
     for ww in whoop_workouts:
         if _times_overlap(ww.get("start", ""), ww.get("end", ""),
                           sa.get("start_date", ""), elapsed_time):
             ww_score = ww.get("score", {})
             if ww_score.get("strain") is not None:
-                line2_parts.append("Strain: %.1f" % ww_score["strain"])
+                headers.append("Strain"); values.append("%.1f" % ww_score["strain"])
             break
 
-    result = line1
-    if line2_parts:
-        result += "\n" + " | ".join(line2_parts)
-    return result
+    if headers:
+        return header + "\n" + _md_table(headers, values)
+    return header
 
 
 def _format_whoop_workout(ww):
-    """Format a Whoop-only workout (no Strava match)."""
+    """Format a Whoop-only workout as a header line + metrics table."""
     sport = ww.get("sport_name", "Workout")
     start_time = format_time_local(ww.get("start", ""))
     ww_score = ww.get("score", {})
 
-    line1 = "**%s**" % sport
+    header = "**%s**" % sport
     if start_time:
-        line1 += " " + start_time
+        header += " \u00b7 " + start_time
 
-    # Duration from start/end
+    headers, values = [], []
     try:
         s = re.sub(r'\.\d+', '', ww["start"].replace('Z', '+00:00'))
         e = re.sub(r'\.\d+', '', ww["end"].replace('Z', '+00:00'))
         dur_s = (datetime.fromisoformat(e) - datetime.fromisoformat(s)).total_seconds()
-        line1 += " — %s elapsed" % seconds_to_hms(dur_s)
+        headers.append("Duration"); values.append(seconds_to_hms(dur_s))
     except (ValueError, KeyError):
         pass
-
-    line2_parts = []
     if ww_score.get("average_heart_rate") is not None:
-        hr_str = "HR avg %d" % round(ww_score["average_heart_rate"])
-        if ww_score.get("max_heart_rate") is not None:
-            hr_str += " / max %d" % round(ww_score["max_heart_rate"])
-        line2_parts.append(hr_str)
+        headers.append("Avg HR"); values.append("%d bpm" % round(ww_score["average_heart_rate"]))
+    if ww_score.get("max_heart_rate") is not None:
+        headers.append("Max HR"); values.append("%d bpm" % round(ww_score["max_heart_rate"]))
     if ww_score.get("strain") is not None:
-        line2_parts.append("Strain: %.1f" % ww_score["strain"])
+        headers.append("Strain"); values.append("%.1f" % ww_score["strain"])
 
-    result = line1
-    if line2_parts:
-        result += "\n" + " | ".join(line2_parts)
-    return result
+    if headers:
+        return header + "\n" + _md_table(headers, values)
+    return header
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +698,18 @@ places:
 ---
 
 # {day_long}
+
+## What happened today
+
+
+## What's on my mind
+
+
+## Grateful for
+
+
+## Whoop
+
 """
 
 WHOOP_SECTION_PATTERN = re.compile(
@@ -834,8 +842,8 @@ def main():
     # Merge
     new_body = merge_body(body, whoop_section)
 
-    # Write
-    final_content = new_fm + new_body
+    # Write — ensure a blank line always separates frontmatter close from body
+    final_content = new_fm + "\n" + new_body.lstrip("\n")
     atomic_write(journal_file, final_content)
     log.info("Written: %s", journal_file)
 
