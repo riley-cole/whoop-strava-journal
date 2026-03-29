@@ -81,6 +81,7 @@ def refresh_whoop_token(config, tokens):
     }).encode()
     req = urllib.request.Request(WHOOP_TOKEN_URL, data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("User-Agent", "whoop-journal/0.1.0")
     try:
         with urllib.request.urlopen(req) as resp:
             new_tokens = json.loads(resp.read())
@@ -105,6 +106,7 @@ def refresh_strava_token(config, tokens):
     }).encode()
     req = urllib.request.Request(STRAVA_TOKEN_URL, data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("User-Agent", "whoop-journal/0.1.0")
     try:
         with urllib.request.urlopen(req) as resp:
             new_tokens = json.loads(resp.read())
@@ -128,6 +130,7 @@ def api_get(url, access_token, params=None, retries=3):
         url = url + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url)
     req.add_header("Authorization", "Bearer " + access_token)
+    req.add_header("User-Agent", "whoop-journal/0.1.0")
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -192,7 +195,7 @@ def fetch_whoop_data(config, tokens, target_date):
 
     # Recovery
     try:
-        resp = api_get(f"{WHOOP_API}/v1/recovery", token,
+        resp = api_get(f"{WHOOP_API}/v2/recovery", token,
                        {"start": window_start, "end": window_end, "limit": "10"})
         if resp and resp.get("records"):
             for rec in resp["records"]:
@@ -207,7 +210,7 @@ def fetch_whoop_data(config, tokens, target_date):
 
     # Sleep
     try:
-        resp = api_get(f"{WHOOP_API}/v1/activity/sleep", token,
+        resp = api_get(f"{WHOOP_API}/v2/activity/sleep", token,
                        {"start": window_start, "end": window_end, "limit": "10"})
         if resp and resp.get("records"):
             for sleep in resp["records"]:
@@ -225,7 +228,7 @@ def fetch_whoop_data(config, tokens, target_date):
 
     # Workouts
     try:
-        resp = api_get(f"{WHOOP_API}/v1/activity/workout", token,
+        resp = api_get(f"{WHOOP_API}/v2/activity/workout", token,
                        {"start": window_start, "end": window_end, "limit": "25"})
         if resp and resp.get("records"):
             data["workouts"] = [w for w in resp["records"]

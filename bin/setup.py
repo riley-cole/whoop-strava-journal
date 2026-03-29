@@ -207,6 +207,7 @@ def setup_whoop(config):
     }).encode()
     req = urllib.request.Request(WHOOP_TOKEN_URL, data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("User-Agent", "whoop-journal/0.1.0")
 
     try:
         with urllib.request.urlopen(req) as resp:
@@ -238,6 +239,7 @@ def test_whoop(tokens=None):
     print("    Testing Whoop API...")
     req = urllib.request.Request(WHOOP_API + "/v1/user/profile/basic")
     req.add_header("Authorization", "Bearer " + tokens["access_token"])
+    req.add_header("User-Agent", "whoop-journal/0.1.0")
     try:
         with urllib.request.urlopen(req) as resp:
             profile = json.loads(resp.read())
@@ -334,6 +336,7 @@ def test_strava(tokens=None):
     print("    Testing Strava API...")
     req = urllib.request.Request(STRAVA_API + "/athlete")
     req.add_header("Authorization", "Bearer " + tokens["access_token"])
+    req.add_header("User-Agent", "whoop-journal/0.1.0")
     try:
         with urllib.request.urlopen(req) as resp:
             athlete = json.loads(resp.read())
