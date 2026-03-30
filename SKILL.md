@@ -70,6 +70,7 @@ python3 ~/.claude/skills/whoop-journal/bin/setup.py --reauth
 | `--skip-existing` | Skip dates that already have whoop/strava data |
 | `--whoop-only` | Only pull Whoop data |
 | `--strava-only` | Only pull Strava data |
+| `--enrich-only` | Run enrichment only (project detection, recovery tags) without fetching data |
 
 ## Data Written
 
@@ -77,6 +78,13 @@ python3 ~/.claude/skills/whoop-journal/bin/setup.py --reauth
 - `whoop-recovery` (0-100), `whoop-hrv` (ms), `whoop-rhr` (bpm)
 - `whoop-strain` (0-21), `whoop-sleep-score` (0-100), `whoop-sleep-hours`
 - `strava-miles`, `strava-runs`
+
+**Auto-enrichment** (runs on every sync, or standalone with `--enrich-only`):
+- `recovery/green|yellow|red` tag added to frontmatter `tags:` array based on Whoop recovery score
+- `#recovery/green|yellow|red` inline tag added to `## Whoop` section (clickable in Obsidian)
+- `projects:` frontmatter array auto-populated from `[[WikiLink]]` matches against config project list
+
+See `docs/tagging_convention.md` for the full tagging/linking standard.
 
 **Body section** (`## Whoop`): Recovery summary, sleep stages, strain, activities.
 Strava activities show distance/pace/elevation. Whoop workouts show strain/HR.

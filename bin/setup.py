@@ -375,12 +375,12 @@ def load_or_create_config():
     print("No config found. Creating new configuration.\n")
 
     # Detect vault path
-    default_vault = str(Path.home() / "Documents" / "Cole Family")
+    default_vault = str(Path.home() / "Documents" / "Obsidian")
     if not Path(default_vault).exists():
         default_vault = ""
 
     vault_path = prompt("Obsidian vault path", default_vault)
-    journal_path = prompt("Journal subfolder (relative to vault)", "_Riley/Journal")
+    journal_path = prompt("Journal subfolder (relative to vault)", "Journal")
 
     config = {
         "vault_path": vault_path,

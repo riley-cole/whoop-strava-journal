@@ -356,8 +356,37 @@ def build_frontmatter_string(fm, original_lines, whoop_data, strava_data):
         skip_list = False
         lines.append(line)
 
-    # Append whoop metrics
+    # Inject recovery zone tag into tags array
     recovery = whoop_data.get("recovery", {})
+    rec_score_obj = recovery.get("score", {})
+    zone = _recovery_zone(rec_score_obj.get("recovery_score"))
+    if zone and recovery.get("score_state") != "PENDING_SCORE":
+        # Find the tags block and inject/replace recovery tag
+        tag_idx = None
+        tag_end = None
+        for i, line in enumerate(lines):
+            if line.startswith("tags:"):
+                tag_idx = i
+            elif tag_idx is not None and line.startswith("  - "):
+                tag_end = i
+            elif tag_idx is not None and not line.startswith("  - "):
+                break
+        if tag_idx is not None:
+            # Remove any existing recovery/* tag
+            lines = [l for l in lines if not (l.startswith("  - ") and "recovery/" in l)]
+            # Find insertion point — after last tag item
+            insert_at = None
+            for i, line in enumerate(lines):
+                if line.startswith("tags:"):
+                    insert_at = i + 1
+                elif insert_at is not None and line.startswith("  - "):
+                    insert_at = i + 1
+                elif insert_at is not None:
+                    break
+            if insert_at is not None:
+                lines.insert(insert_at, "  - recovery/%s" % zone)
+
+    # Append whoop metrics
     cycle = whoop_data.get("cycle", {})
     sleep = whoop_data.get("sleep", {})
 
@@ -464,6 +493,18 @@ def _md_table(headers, values):
     return "\n".join([row1, sep, row2])
 
 
+def _recovery_zone(score):
+    """Return recovery zone tag suffix: green/yellow/red."""
+    if score is None:
+        return None
+    score = round(score)
+    if score >= 67:
+        return "green"
+    if score >= 34:
+        return "yellow"
+    return "red"
+
+
 def _bar(value, max_val, width=10, invert=False):
     """Unicode block progress bar. \u2588 = filled, \u2591 = empty."""
     if not max_val or max_val <= 0:
@@ -493,6 +534,14 @@ def build_whoop_section(whoop_data, strava_data):
 
     # rows: (label, value_str, bar_str, extras_str) — ("","","","") = blank separator
     rows = []
+
+    # Recovery inline tag — placed after ## Whoop header, outside code fence
+    rec_zone = None
+    if recovery.get("score_state") != "PENDING_SCORE" and rec_score.get("recovery_score") is not None:
+        rec_zone = _recovery_zone(rec_score["recovery_score"])
+    if rec_zone:
+        parts.append("#recovery/%s" % rec_zone)
+        parts.append("")
 
     # Recovery block
     if recovery.get("score_state") == "PENDING_SCORE":
@@ -695,6 +744,7 @@ tags:
   - journal
 people:
 places:
+projects:
 ---
 
 # {day_long}
@@ -726,6 +776,123 @@ def create_journal_from_template(target_date):
         day=day_name,
         day_long=target_date.strftime("%A, %B %-d, %Y")
     )
+
+
+def _enrich_array(fm_lines, key, matched):
+    """Update a frontmatter array (people/places/projects) with auto-detected values.
+
+    Preserves manually-added entries not in the matched set.
+    Returns (new_lines, changed).
+    """
+    new_lines = []
+    found = False
+    skip_list = False
+    for line in fm_lines:
+        if line.startswith(key + ":"):
+            found = True
+            new_lines.append(key + ":")
+            skip_list = True
+            for p in matched:
+                new_lines.append('  - "[[%s]]"' % p)
+            continue
+        if skip_list and line.startswith("  - "):
+            # Preserve manually-added entries not in the auto-detected set
+            val = line.strip()[2:].strip().strip('"').strip("'")
+            clean = val.replace("[[", "").replace("]]", "")
+            if clean not in matched:
+                new_lines.append(line)
+            continue
+        skip_list = False
+        new_lines.append(line)
+
+    if not found and matched:
+        new_lines.append(key + ":")
+        for p in matched:
+            new_lines.append('  - "[[%s]]"' % p)
+
+    return new_lines
+
+
+def _auto_wikilink(body, known_names):
+    """Wrap plain-text mentions of known names in [[brackets]].
+
+    Skips names already inside [[ ]], code fences, and inline code.
+    Processes longer names first to avoid partial matches (e.g. "Golf App"
+    before "Golf"). Uses word-boundary matching to avoid linking substrings.
+    """
+    if not known_names:
+        return body
+
+    # Sort longest first to match multi-word names before single words
+    names = sorted(known_names, key=len, reverse=True)
+
+    # Split body into segments: code fences, inline code, existing wikilinks, and text
+    # We only modify text segments
+    token_pattern = re.compile(
+        r'(```.*?```'        # fenced code blocks
+        r'|`[^`]+`'          # inline code
+        r'|\[\[[^\]]+\]\]'   # existing wikilinks
+        r')',
+        re.DOTALL
+    )
+
+    segments = token_pattern.split(body)
+    result = []
+    for i, seg in enumerate(segments):
+        if i % 2 == 1:
+            # This is a code/wikilink segment — pass through untouched
+            result.append(seg)
+        else:
+            # Plain text — apply wikilink substitutions
+            for name in names:
+                # Word boundary match, case-sensitive
+                # Use negative lookbehind/ahead for [[ ]] to be safe
+                pattern = r'(?<!\[\[)\b(' + re.escape(name) + r')\b(?!\]\])'
+                seg = re.sub(pattern, r'[[\1]]', seg)
+            result.append(seg)
+
+    return "".join(result)
+
+
+def enrich_frontmatter(content, config):
+    """Auto-wikilink known names, then enrich frontmatter arrays."""
+    fm, fm_lines, body = parse_journal(content)
+    if not fm_lines:
+        return content
+
+    # Collect all known names from config
+    all_known = (
+        config.get("people", [])
+        + config.get("places", [])
+        + config.get("projects", [])
+    )
+
+    # Step 1: Auto-wikilink plain-text mentions in body
+    body = _auto_wikilink(body, all_known)
+
+    # Step 2: Extract all [[WikiLink]] references from enriched body
+    wikilinks = set(re.findall(r'\[\[([^\]]+)\]\]', body))
+
+    # Match against configured lists
+    known_people = config.get("people", [])
+    known_places = config.get("places", [])
+    known_projects = config.get("projects", [])
+
+    matched_people = sorted(p for p in known_people if p in wikilinks)
+    matched_places = sorted(p for p in known_places if p in wikilinks)
+    matched_projects = sorted(p for p in known_projects if p in wikilinks)
+
+    # Apply frontmatter enrichments
+    lines = fm_lines
+    if matched_people:
+        lines = _enrich_array(lines, "people", matched_people)
+    if matched_places:
+        lines = _enrich_array(lines, "places", matched_places)
+    if matched_projects:
+        lines = _enrich_array(lines, "projects", matched_projects)
+
+    new_fm = "---\n" + "\n".join(lines) + "\n---"
+    return new_fm + "\n" + body.lstrip("\n")
 
 
 def merge_body(existing_body, whoop_section):
@@ -767,6 +934,8 @@ def main():
                         help="Skip dates that already have whoop/strava data")
     parser.add_argument("--whoop-only", action="store_true", help="Only pull Whoop data")
     parser.add_argument("--strava-only", action="store_true", help="Only pull Strava data")
+    parser.add_argument("--enrich-only", action="store_true",
+                        help="Only run enrichment (projects, recovery tags) without fetching data")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -788,8 +957,22 @@ def main():
 
     config = load_config()
     vault_path = Path(config.get("vault_path", "")).expanduser()
-    journal_path = vault_path / config.get("journal_path", "_Riley/Journal")
+    journal_path = vault_path / config.get("journal_path", "Journal")
     journal_file = journal_path / (target_date.isoformat() + ".md")
+
+    # Enrich-only mode: skip data fetching, just run enrichment on existing file
+    if args.enrich_only:
+        if not journal_file.exists():
+            log.warning("No journal file found for %s. Nothing to enrich.", target_date)
+            return
+        content = journal_file.read_text()
+        enriched = enrich_frontmatter(content, config)
+        if enriched != content:
+            atomic_write(journal_file, enriched)
+            log.info("Enriched: %s", journal_file.name)
+        else:
+            log.info("No enrichment changes for %s.", target_date)
+        return
 
     # Check skip-existing
     if args.skip_existing and journal_file.exists():
@@ -844,6 +1027,10 @@ def main():
 
     # Write — ensure a blank line always separates frontmatter close from body
     final_content = new_fm + "\n" + new_body.lstrip("\n")
+
+    # Run enrichment pass (project auto-detection)
+    final_content = enrich_frontmatter(final_content, config)
+
     atomic_write(journal_file, final_content)
     log.info("Written: %s", journal_file)
 
